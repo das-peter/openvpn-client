@@ -1,0 +1,90 @@
+version: '3.7'
+
+secrets:
+  vpn_auth:
+    file: ./secrets/vpn.auth
+
+networks:
+  default:
+
+services:
+  vpn:
+    container_name: openvpn-client
+    image: dperson/openvpn-client
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    # cap_add, security_opt, and volume required for the image to function
+    cap_add:
+      - net_admin
+    devices:
+      - /dev/net/tun
+    environment:
+      TZ: 'EST5EDT'
+    networks:
+      - default
+    #read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+#    stdin_open: true
+#    tty: true
+    secrets:
+      - vpn_auth
+    volumes:
+      - ./vpn-conf:/vpn:ro
+      - ../openvpn.sh:/usr/bin/openvpn.sh
+#    ports:
+#      - "9988:80"
+#      - "9943:443"
+    command: "tail -f /dev/null"
+
+  reverse-endpoint:
+    container_name: openvpn-client-reverse-endpoint
+    image: node:12-alpine
+    depends_on:
+      - vpn
+    environment:
+      TZ: 'EST5EDT'
+      NODE_ENV: "production"
+    network_mode: "service:vpn"
+    working_dir: /home/node/app
+    volumes:
+      - ./app:/home/node/app
+    command: "npm run start"
+
+  test-suite:
+    container_name: openvpn-client-test-suite
+    build: ./test-suite
+    depends_on:
+      - vpn
+    environment:
+      TZ: 'EST5EDT'
+    network_mode: "service:vpn"
+
+  proxy:
+    container_name: openvpn-client-proxy
+    image: dperson/nginx
+    depends_on:
+      - reverse-endpoint
+    environment:
+      TZ: 'EST5EDT'
+    links:
+      - vpn:reverse-endpoint
+    networks:
+      - default
+    ports:
+      - "9988:80"
+      - "9943:443"
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /var/cache/nginx
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    command: -w "http://reverse-endpoint:8888;/reverse-endpoint"
